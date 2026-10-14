@@ -1,0 +1,14 @@
+npm init -y
+node vulnerabilidad.js
+
+<h1 style="color:red">HACKEADO</h1>
+
+reflejado
+<script>alert("XSS reflejado")</script>
+
+almacenado
+<script>alert("XSS almacenado")</script>
+
+
+modo seguro
+set MODO=seguro&& node vulnerabilidad.js
