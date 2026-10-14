@@ -1,28 +1,80 @@
-const { URL } = require('url');
+const express = require('express');
 const dns = require('dns').promises;
+const { URL } = require('url');
 const ipaddr = require('ipaddr.js');
 
-const DOMINIOS_PERMITIDOS = ['api.ejemplo.com', 'cdn.ejemplo.com'];
+const app = express();
+const PORT = 5000;
 
-async function esUrlSegura(urlStr) {
-  let url;
-  try { url = new URL(urlStr); } catch { return false; }
+async function isSafeUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
 
-  if (url.protocol !== 'https:') return false;                 // solo HTTPS
-  if (!DOMINIOS_PERMITIDOS.includes(url.hostname)) return false; // lista blanca
+    // 1. Solo permite esquemas HTTP y HTTPS
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return false;
+    }
 
-  // Resolver DNS y bloquear IPs internas/privadas
-  const { address } = await dns.lookup(url.hostname);
-  const rango = ipaddr.parse(address).range();
-  return rango === 'unicast'; // rechaza private, loopback, linkLocal, etc.
+    const hostname = parsed.hostname;
+    if (!hostname) return false;
+
+    // 2. Resuelve el nombre de dominio a una dirección IP
+    const { address } = await dns.lookup(hostname);
+
+    // 3. Verifica si la IP es privada, de loopback (127.x.x.x) o reservada
+    const addr = ipaddr.parse(address);
+    const range = addr.range(); // Retorna 'unicast', 'private', 'loopback', 'linkLocal', etc.
+
+    if (range !== 'unicast') {
+      return false; // Rechaza private, loopback, linkLocal, etc.
+    }
+
+    return true;
+  } catch (e) {
+    // Si falla la resolución DNS o el formato es inválido, bloqueamos por seguridad
+    return false;
+  }
 }
 
-app.get('/api/preview', async (req, res) => {
-  if (!(await esUrlSegura(req.query.url))) {
-    return res.status(400).json({ error: 'URL no permitida' });
-  }
-  const respuesta = await fetch(req.query.url, { redirect: 'error' }); // sin redirecciones
-  res.send(await respuesta.text());
+// Ruta principal con menú HTML
+app.get('/', (req, res) => {
+  res.send(`
+    <h2>SSRF Secure Demo (Protegido)</h2>
+    <p>Prueba los siguientes enlaces:</p>
+    <ul>
+        <li><a href="/fetch?url=https://httpbin.org/get" target="_blank">https://httpbin.org/get</a> (Externo, permitido)</li>
+        <li><a href="/fetch?url=http://127.0.0.1:5000" target="_blank">http://127.0.0.1:5000</a> (Interno, bloqueado)</li>
+        <li><a href="/fetch?url=http://169.254.169.254/latest/meta-data/" target="_blank">Metadata de Cloud</a> (Reservada, bloqueado)</li>
+    </ul>
+  `);
 });
 
+app.get('/fetch', async (req, res) => {
+  const url = req.query.url;
 
+  if (!url) {
+    return res.status(400).json({ error: "Falta el parámetro ?url=" });
+  }
+
+  // VALIDACIÓN DE SEGURIDAD
+  if (!(await isSafeUrl(url))) {
+    return res.status(403).json({ error: "URL no permitida - acceso a recursos internos bloqueado" });
+  }
+
+  try {
+    // redirect: 'error' evita que un servidor externo redirija a 127.0.0.1
+    const resp = await fetch(url, { redirect: 'error' });
+    const body = await resp.text();
+
+    return res.json({
+      status_code: resp.status,
+      body: body.substring(0, 1000) // Limita el tamaño de la respuesta a 1000 caracteres
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`Servidor iniciado en http://127.0.0.1:${PORT}`);
+});

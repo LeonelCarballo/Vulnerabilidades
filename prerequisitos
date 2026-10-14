@@ -1,0 +1,5 @@
+npm init -y
+npm install express ipaddr.js
+
+node Vulnerabilidades/Vulnerable/SSRF.js
+node Vulnerabilidades/Mitigado/SSRF.js
